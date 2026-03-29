@@ -90,28 +90,22 @@ async def to_code(config):
     # Build flags
     cg.add_build_flag("-DESP_DL_MODEL_YOLO11=1")
 
-    # Add include paths
-    component_dir = os.path.dirname(__file__)
-    parent_components_dir = os.path.dirname(component_dir)
-
-    # Detect target platform for ISA-specific includes
+    # Detect target platform
     # ESP32-P4 uses MIPI camera, ESP32-S3 uses esp32_camera
     is_p4 = CONF_CAMERA_ID in config  # MIPI = P4
-    is_s3 = CONF_ESP32_CAMERA_ID in config  # esp32_camera = S3 or other
 
     if is_p4:
         cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32P4=1")
-        isa_target = "esp32p4"
     else:
         # ESP32-S3 uses TIE728 SIMD engine
         cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32S3=1")
-        isa_target = "tie728"
 
     # ESP-DL: download via PlatformIO lib_deps
-    # Include paths are set by the build script (yolo11_detection_build.py)
+    # Build script compiles ESP-DL sources + embeds model
     cg.add_library("esp-dl", None, "https://github.com/espressif/esp-dl.git#v3.2.3")
 
-    # Build script for model embedding
+    # Build script for ESP-DL compilation + model embedding
+    component_dir = os.path.dirname(__file__)
     build_script_path = os.path.join(component_dir, "yolo11_detection_build.py")
     if os.path.exists(build_script_path):
         cg.add_platformio_option("extra_scripts", [f"post:{build_script_path}"])

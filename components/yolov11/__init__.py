@@ -149,7 +149,13 @@ async def to_code(config):
 
     # Build flags for ESP-DL
     cg.add_build_flag("-DESP_DL_MODEL_YOLO11=1")
-    cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32P4=1")
+
+    # Detect target platform
+    is_p4 = CONF_CAMERA_ID in config  # MIPI = P4
+    if is_p4:
+        cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32P4=1")
+    else:
+        cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32S3=1")
 
     # Include paths
     component_dir = os.path.dirname(os.path.abspath(__file__))

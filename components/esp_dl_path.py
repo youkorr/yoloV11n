@@ -162,10 +162,26 @@ def find_esp_dl(env, fallback_components_dir=None):
 
     # 7. Fallback to local components/esp-dl/
     if fallback_components_dir:
-        local_dir = os.path.join(fallback_components_dir, "esp-dl")
-        if os.path.isdir(local_dir) and os.path.exists(os.path.join(local_dir, "dl")):
-            print(f"[ESP-DL] Found locally: {local_dir}")
-            return local_dir
+        # Check both components/esp-dl/ and components/esp-dl/esp-dl/
+        for subpath in ["esp-dl", "esp_dl"]:
+            local_dir = os.path.join(fallback_components_dir, subpath)
+            result = _check_esp_dl_dir(local_dir)
+            if result:
+                print(f"[ESP-DL] Found locally: {result}")
+                return result
+
+    # 8. Search in parent directories (for monorepo setups)
+    try:
+        project_dir = env["PROJECT_DIR"]
+        for parent in [project_dir, os.path.dirname(project_dir)]:
+            for subpath in ["components/esp-dl", "esp-dl"]:
+                candidate = os.path.join(parent, subpath)
+                result = _check_esp_dl_dir(candidate)
+                if result:
+                    print(f"[ESP-DL] Found in parent dir: {result}")
+                    return result
+    except (KeyError, OSError):
+        pass
 
     raise FileNotFoundError(
         "[ESP-DL] esp-dl not found! Add to your YAML config:\n"
