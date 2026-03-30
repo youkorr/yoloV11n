@@ -166,9 +166,8 @@ async def to_code(config):
     if os.path.exists(yolo11_detect_dir):
         cg.add_build_flag(f"-I{yolo11_detect_dir}")
 
-    # ESP-DL: download via PlatformIO lib_deps
-    # Include paths are set by the build script (yolov11_build.py)
-    cg.add_library("esp-dl", None, "https://github.com/espressif/esp-dl.git#v3.2.3")
+    # ESP-DL: downloaded by build script (not via lib_deps - esp-dl has no library.json)
+    # The build script (yolov11_build.py) handles git clone + compilation
 
     # Register build script
     build_script = os.path.join(component_dir, "yolov11_build.py")
