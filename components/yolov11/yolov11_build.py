@@ -2,19 +2,20 @@
 Build script for YOLOV11 component.
 Compiles ESP-DL sources and sets up include paths.
 Supports both ESP32-P4 and ESP32-S3 targets.
-The model is loaded at runtime via the file component.
+Auto-downloads the correct COCO YOLO11n model for the target platform.
 """
 
 import os
 import sys
 import glob
+import subprocess
 Import("env")
 
 script_dir = Dir('.').srcnode().abspath
 component_dir = script_dir
 parent_components_dir = os.path.dirname(component_dir)
 
-# Find esp-dl (downloaded by PlatformIO lib_deps or local)
+# Find esp-dl (auto-downloads if not found)
 sys.path.insert(0, parent_components_dir)
 from esp_dl_path import find_esp_dl
 esp_dl_resolved_dir = find_esp_dl(env, fallback_components_dir=parent_components_dir)
@@ -47,6 +48,177 @@ for define in cpp_defines:
         break
 
 print(f"[YOLOV11] Target: chip={chip_target}, isa={isa_target}")
+
+# ========================================================================
+# Auto-download COCO YOLO11n model for target platform
+# ========================================================================
+# Models are in esp-dl repo: models/coco_detect/models/{s3,p4}/
+# Model name: coco_detect_yolo11n_s8_v1.espdl (smallest, fastest)
+ESP_DL_MODELS_REPO = "https://github.com/espressif/esp-dl.git"
+ESP_DL_MODELS_TAG = "v3.2.3"
+# Default model: s8_v1 is fastest and most suitable for real-time detection
+DEFAULT_MODEL_NAME = "coco_detect_yolo11n_s8_v1.espdl"
+
+
+def get_model_target_dir():
+    """Get the platform-specific model subdirectory name (s3 or p4)."""
+    if chip_target == "esp32s3":
+        return "s3"
+    return "p4"
+
+
+def find_or_download_model():
+    """Find the COCO model for the target platform, download if needed.
+
+    Search order:
+      1. models/{s3,p4}/ in this component
+      2. models/ in this component (flat)
+      3. yolo11_detect/models/{s3,p4}/ in sibling component
+      4. .cache/models/{s3,p4}/ in project dir
+      5. Download from esp-dl repository
+    """
+    model_target = get_model_target_dir()
+
+    # 1. Check component models dir
+    local_model = os.path.join(component_dir, "models", model_target, DEFAULT_MODEL_NAME)
+    if os.path.exists(local_model):
+        print(f"[YOLOV11] Model found: {local_model}")
+        return local_model
+
+    # 2. Check flat models dir
+    flat_model = os.path.join(component_dir, "models", DEFAULT_MODEL_NAME)
+    if os.path.exists(flat_model):
+        print(f"[YOLOV11] Model found (flat): {flat_model}")
+        return flat_model
+
+    # 3. Check sibling yolo11_detect component
+    sibling_model = os.path.join(
+        parent_components_dir, "yolo11_detect", "models", model_target, DEFAULT_MODEL_NAME
+    )
+    if os.path.exists(sibling_model):
+        print(f"[YOLOV11] Model found in yolo11_detect: {sibling_model}")
+        return sibling_model
+
+    # Also check with yolo11_detect naming convention
+    sibling_alt = os.path.join(
+        parent_components_dir, "yolo11_detect", "models", model_target,
+        "yolo11_detect_s8_v1.espdl"
+    )
+    if os.path.exists(sibling_alt):
+        print(f"[YOLOV11] Model found in yolo11_detect (alt name): {sibling_alt}")
+        return sibling_alt
+
+    # 4. Check cache
+    try:
+        project_dir = env["PROJECT_DIR"]
+    except KeyError:
+        project_dir = None
+
+    if project_dir:
+        cache_model = os.path.join(
+            project_dir, ".cache", "models", model_target, DEFAULT_MODEL_NAME
+        )
+        if os.path.exists(cache_model):
+            print(f"[YOLOV11] Model found in cache: {cache_model}")
+            return cache_model
+
+        # 5. Download model from esp-dl repo (sparse checkout of models/ only)
+        cache_models_dir = os.path.join(project_dir, ".cache", "models", model_target)
+        os.makedirs(cache_models_dir, exist_ok=True)
+
+        # Try direct download via git archive
+        model_path_in_repo = f"models/coco_detect/models/{model_target}/{DEFAULT_MODEL_NAME}"
+        print(f"[YOLOV11] Downloading model for {chip_target}: {DEFAULT_MODEL_NAME}...")
+
+        # Method 1: Use the already-downloaded esp-dl repo
+        esp_dl_model = os.path.join(
+            esp_dl_resolved_dir, "..", "models", "coco_detect", "models",
+            model_target, DEFAULT_MODEL_NAME
+        )
+        esp_dl_model = os.path.normpath(esp_dl_model)
+        if os.path.exists(esp_dl_model):
+            import shutil
+            shutil.copy2(esp_dl_model, os.path.join(cache_models_dir, DEFAULT_MODEL_NAME))
+            print(f"[YOLOV11] Model copied from esp-dl: {esp_dl_model}")
+            return os.path.join(cache_models_dir, DEFAULT_MODEL_NAME)
+
+        # Method 2: Download just the model file via git
+        try:
+            tmp_dir = os.path.join(project_dir, ".cache", "esp-dl-models-tmp")
+            if os.path.exists(tmp_dir):
+                import shutil
+                shutil.rmtree(tmp_dir)
+
+            subprocess.check_call(
+                ["git", "init"], cwd=None,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            os.makedirs(tmp_dir, exist_ok=True)
+            subprocess.check_call(
+                ["git", "init"], cwd=tmp_dir,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            subprocess.check_call(
+                ["git", "remote", "add", "origin", ESP_DL_MODELS_REPO],
+                cwd=tmp_dir,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            subprocess.check_call(
+                ["git", "config", "core.sparseCheckout", "true"],
+                cwd=tmp_dir,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            sparse_file = os.path.join(tmp_dir, ".git", "info", "sparse-checkout")
+            os.makedirs(os.path.dirname(sparse_file), exist_ok=True)
+            with open(sparse_file, "w") as f:
+                f.write(f"models/coco_detect/models/{model_target}/\n")
+            subprocess.check_call(
+                ["git", "fetch", "--depth", "1", "origin",
+                 f"refs/tags/{ESP_DL_MODELS_TAG}"],
+                cwd=tmp_dir, timeout=300,
+            )
+            subprocess.check_call(
+                ["git", "checkout", "FETCH_HEAD"],
+                cwd=tmp_dir, timeout=120,
+            )
+
+            downloaded = os.path.join(
+                tmp_dir, "models", "coco_detect", "models",
+                model_target, DEFAULT_MODEL_NAME
+            )
+            if os.path.exists(downloaded):
+                import shutil
+                shutil.copy2(downloaded, os.path.join(cache_models_dir, DEFAULT_MODEL_NAME))
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                print(f"[YOLOV11] Model downloaded for {chip_target}: {DEFAULT_MODEL_NAME}")
+                return os.path.join(cache_models_dir, DEFAULT_MODEL_NAME)
+            else:
+                print(f"[YOLOV11] WARNING: Model not found after download")
+                import shutil
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception as e:
+            print(f"[YOLOV11] Model download failed: {e}")
+
+    print(f"[YOLOV11] ERROR: Could not find model {DEFAULT_MODEL_NAME} for {chip_target}")
+    print(f"[YOLOV11]   Place it in: components/yolov11/models/{get_model_target_dir()}/{DEFAULT_MODEL_NAME}")
+    return None
+
+
+# Check if auto-model is requested (no model_id in YAML)
+auto_model = False
+for define in cpp_defines:
+    if isinstance(define, tuple):
+        key, _ = define
+    else:
+        key = define
+    if key == "YOLOV11_AUTO_MODEL":
+        auto_model = True
+        break
+
+if auto_model:
+    model_path = find_or_download_model()
+    if model_path:
+        print(f"[YOLOV11] Auto-model: {os.path.basename(model_path)} ({chip_target})")
 
 # ========================================================================
 # CONFIG defines (only add if not already set)
@@ -104,9 +276,8 @@ if os.path.exists(esp_dl_dir):
     print("[YOLOV11] ESP-DL include paths added")
 
     # ====================================================================
-    # Compile ESP-DL source files
+    # Compile ESP-DL source files (NO audio/ - only dl + vision)
     # ====================================================================
-    # Core directories (always needed)
     esp_dl_source_dirs = [
         "dl/tensor/src",
         "dl/model/src",
@@ -118,7 +289,7 @@ if os.path.exists(esp_dl_dir):
         "vision/detect",     # Detection postprocessors (YOLO11)
     ]
 
-    # Files to exclude (audio/ is NOT in source dirs - not needed for YOLO11)
+    # Files to exclude
     esp_dl_exclude = [
         "dl_base_dotprod.cpp",                  # Use custom no-DSP implementation
         "dl_image_jpeg.cpp",                    # JPEG not used
@@ -241,4 +412,4 @@ if sources_to_add:
 else:
     print("[YOLOV11] WARNING: No sources to compile!")
 
-print("[YOLOV11] Build script completed")
+print(f"[YOLOV11] Build script completed ({chip_target})")

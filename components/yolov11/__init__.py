@@ -14,7 +14,7 @@ CONF_DETECT_CLASSES = "detect_classes"
 CONF_DETECTION_INTERVAL = "detection_interval"
 CONF_DRAW_ENABLED = "draw_enabled"
 
-# 80 classes COCO par défaut
+# 80 classes COCO
 DEFAULT_COCO_LABELS = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
     "truck", "boat", "traffic light", "fire hydrant", "stop sign",
@@ -41,11 +41,11 @@ YOLOV11InferenceAction = yolov11_ns.class_(
 file_ns = cg.esphome_ns.namespace("file_component")
 FileData = file_ns.class_("FileData", cg.Component)
 
-# esp32_camera (ESPHome standard)
+# esp32_camera (ESPHome standard - ESP32-S3)
 esp32_camera_ns = cg.esphome_ns.namespace("esp32_camera")
 ESP32Camera = esp32_camera_ns.class_("ESP32Camera", cg.Component)
 
-# esp_cam_sensor (MIPI DSI - internal camera)
+# esp_cam_sensor (MIPI DSI - ESP32-P4)
 esp_cam_sensor_ns = cg.esphome_ns.namespace("esp_cam_sensor")
 MipiDSICamComponent = esp_cam_sensor_ns.class_(
     "MipiDSICamComponent", cg.Component
@@ -57,7 +57,7 @@ def validate_camera_config(config):
     has_mipi_cam = CONF_CAMERA_ID in config
     if not has_esp32_cam and not has_mipi_cam:
         raise cv.Invalid(
-            "Either 'esp32_camera_id' or 'camera_id' must be specified"
+            "Either 'esp32_camera_id' (ESP32-S3) or 'camera_id' (ESP32-P4) must be specified"
         )
     if has_esp32_cam and has_mipi_cam:
         raise cv.Invalid(
@@ -72,7 +72,8 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(): cv.declare_id(YOLOV11Component),
             cv.Optional(CONF_ESP32_CAMERA_ID): cv.use_id(ESP32Camera),
             cv.Optional(CONF_CAMERA_ID): cv.use_id(MipiDSICamComponent),
-            cv.Required(CONF_MODEL_ID): cv.use_id(FileData),
+            # model_id is optional: if not provided, auto-downloads COCO model
+            cv.Optional(CONF_MODEL_ID): cv.use_id(FileData),
             cv.Optional(CONF_SCORE_THRESHOLD, default=0.3): cv.float_range(
                 min=0.0, max=1.0
             ),
@@ -116,6 +117,11 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
+    # Detect target platform from camera type
+    # esp32_camera_id = ESP32-S3, camera_id = ESP32-P4 (MIPI)
+    is_p4 = CONF_CAMERA_ID in config
+    target = "p4" if is_p4 else "s3"
+
     # Set camera
     if CONF_ESP32_CAMERA_ID in config:
         camera = await cg.get_variable(config[CONF_ESP32_CAMERA_ID])
@@ -127,8 +133,15 @@ async def to_code(config):
         cg.add_build_flag("-DUSE_YOLOV11_MIPI_CAMERA")
 
     # Set model
-    model = await cg.get_variable(config[CONF_MODEL_ID])
-    cg.add(var.set_model(model))
+    if CONF_MODEL_ID in config:
+        # User provided a custom model file
+        model = await cg.get_variable(config[CONF_MODEL_ID])
+        cg.add(var.set_model(model))
+    else:
+        # Auto-download COCO model for detected platform (s3 or p4)
+        # Build script will handle download and embedding
+        cg.add_build_flag(f"-DYOLOV11_AUTO_MODEL=1")
+        cg.add_build_flag(f"-DYOLOV11_MODEL_TARGET={target}")
 
     # Set thresholds
     cg.add(var.set_score_threshold(config[CONF_SCORE_THRESHOLD]))
@@ -138,7 +151,8 @@ async def to_code(config):
     for label in config[CONF_CLASS_LABELS]:
         cg.add(var.add_class_label(label))
 
-    # Set class filter (only detect these COCO class indices)
+    # Set class filter
+    # Example: detect_classes: [0, 2, 15, 16] = person, car, cat, dog
     if CONF_DETECT_CLASSES in config:
         for class_id in config[CONF_DETECT_CLASSES]:
             cg.add(var.add_detect_class(class_id))
@@ -150,8 +164,7 @@ async def to_code(config):
     # Build flags for ESP-DL
     cg.add_build_flag("-DESP_DL_MODEL_YOLO11=1")
 
-    # Detect target platform
-    is_p4 = CONF_CAMERA_ID in config  # MIPI = P4
+    # Platform-specific build flags
     if is_p4:
         cg.add_build_flag("-DCONFIG_IDF_TARGET_ESP32P4=1")
     else:
