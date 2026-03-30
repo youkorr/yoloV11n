@@ -118,7 +118,7 @@ if os.path.exists(esp_dl_dir):
         "vision/detect",     # Detection postprocessors (YOLO11)
     ]
 
-    # Files to exclude
+    # Files to exclude (audio/ is NOT in source dirs - not needed for YOLO11)
     esp_dl_exclude = [
         "dl_base_dotprod.cpp",                  # Use custom no-DSP implementation
         "dl_image_jpeg.cpp",                    # JPEG not used
@@ -128,6 +128,9 @@ if os.path.exists(esp_dl_dir):
         "dl_detect_mnp_postprocessor.cpp",      # Face detection specific
         "dl_pose_yolo11_postprocessor.cpp",     # Pose only
     ]
+
+    # Directories to skip entirely (even if found by recursive glob)
+    esp_dl_exclude_dirs = ["audio", "examples", "docs", "test"]
 
     sources_count = {"base": 0, "isa": 0, "core": 0, "vision": 0}
 
@@ -139,9 +142,16 @@ if os.path.exists(esp_dl_dir):
                 # Recursive glob for vision subdirectories
                 pattern = os.path.join(src_dir_path, "**", "*.cpp")
                 for src_file in glob.glob(pattern, recursive=True):
-                    if os.path.basename(src_file) not in esp_dl_exclude:
-                        sources_to_add.append(src_file)
-                        sources_count["vision"] += 1
+                    # Skip excluded directories (audio/, examples/, etc.)
+                    skip = False
+                    for excl_dir in esp_dl_exclude_dirs:
+                        if os.sep + excl_dir + os.sep in src_file or src_file.endswith(os.sep + excl_dir):
+                            skip = True
+                            break
+                    if skip or os.path.basename(src_file) in esp_dl_exclude:
+                        continue
+                    sources_to_add.append(src_file)
+                    sources_count["vision"] += 1
             else:
                 for src_file in glob.glob(os.path.join(src_dir_path, "*.cpp")):
                     if os.path.basename(src_file) not in esp_dl_exclude:
