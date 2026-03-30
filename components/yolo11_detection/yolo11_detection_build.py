@@ -24,9 +24,13 @@ from esp_dl_path import find_esp_dl
 esp_dl_resolved_dir = find_esp_dl(env, fallback_components_dir=parent_components_dir)
 
 # ========================================================================
-# Detect ISA target from build flags
+# Detect target platform from build flags
 # ========================================================================
-isa_target = "esp32p4"  # default
+# ISA target for assembly: "esp32p4" or "tie728" (ESP32-S3)
+# Chip target for FBS libs: "esp32p4" or "esp32s3"
+isa_target = "esp32p4"
+chip_target = "esp32p4"
+
 cpp_defines = env.get('CPPDEFINES', [])
 for define in cpp_defines:
     if isinstance(define, tuple):
@@ -36,12 +40,14 @@ for define in cpp_defines:
         val = None
     if key == "CONFIG_IDF_TARGET_ESP32S3":
         isa_target = "tie728"
+        chip_target = "esp32s3"
         break
     elif key == "CONFIG_IDF_TARGET_ESP32P4":
         isa_target = "esp32p4"
+        chip_target = "esp32p4"
         break
 
-print(f"[YOLO11 Detection] ISA target: {isa_target}")
+print(f"[YOLO11 Detection] Target: chip={chip_target}, isa={isa_target}")
 
 # ========================================================================
 # Add CONFIG defines
@@ -152,7 +158,7 @@ if os.path.exists(esp_dl_dir):
         "dl/base/isa/tie728", "dl/base/isa/xtensa", "dl/base/isa/esp32p4",
         "dl/math/include", "dl/math/src", "dl/model/include",
         "dl/model/src", "dl/module/include", "dl/module/src",
-        "fbs_loader/include", f"fbs_loader/lib/{isa_target}", "fbs_loader/src",
+        "fbs_loader/include", f"fbs_loader/lib/{chip_target}", "fbs_loader/src",
         "vision/detect", "vision/image", "vision/image/isa",
         f"vision/image/isa/{isa_target}",
         "vision/recognition", "vision/classification",
@@ -238,13 +244,13 @@ if os.path.exists(esp_dl_dir):
           f"(base:{sources_count['base']} isa:{sources_count['isa']} "
           f"core:{sources_count['core']} vision:{sources_count['vision']})")
 
-    # Add prebuilt FBS library
-    fbs_lib_dir = os.path.join(esp_dl_dir, "fbs_loader", "lib", isa_target)
+    # Add prebuilt FBS library (uses chip_target, not isa_target)
+    fbs_lib_dir = os.path.join(esp_dl_dir, "fbs_loader", "lib", chip_target)
     fbs_lib = os.path.join(fbs_lib_dir, "libfbs_model.a")
     if os.path.exists(fbs_lib):
         env.Append(LIBPATH=[fbs_lib_dir])
         env.Prepend(LIBS=["fbs_model"])
-        print(f"[YOLO11 Detection] Added libfbs_model.a from {fbs_lib_dir}")
+        print(f"[YOLO11 Detection] Added libfbs_model.a ({chip_target})")
     else:
         print(f"[YOLO11 Detection] WARNING: libfbs_model.a not found at {fbs_lib}")
 

@@ -127,10 +127,16 @@ void YOLO11DetectionComponent::setup() {
 
   ESP_LOGI(TAG, "Model loaded, creating preprocessor...");
 
+#ifdef USE_YOLO11_MIPI_CAMERA
   // ESP32-P4 MIPI CSI camera stores RGB565 big-endian in memory
   this->preprocessor_ = new dl::image::ImagePreprocessor(
       this->dl_model_, {0, 0, 0}, {1, 1, 1},
       dl::image::DL_IMAGE_CAP_RGB_SWAP | dl::image::DL_IMAGE_CAP_RGB565_BIG_ENDIAN);
+#else
+  // ESP32-S3 camera: standard RGB565 little-endian
+  this->preprocessor_ = new dl::image::ImagePreprocessor(
+      this->dl_model_, {0, 0, 0}, {1, 1, 1});
+#endif
 
   ESP_LOGI(TAG, "Creating YOLO11 postprocessor...");
 
